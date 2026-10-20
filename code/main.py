@@ -433,6 +433,7 @@ for face in range(12):
     result, path, step = search1(initial, best)
     if result:
         final_path, final_step, best_face = path, step, face
+        best = step
         solution = True
 if solution:
     print(f'本地图可以单人完成搜索，最小步数为{final_step}，可以在初始面向取{best_face * 30}度时取得，一个最优路径为{final_path}。')
@@ -465,6 +466,7 @@ if not solution:
             result, path, step = search2(initial, best)
             if result:
                 final_path , final_step, best_faces = path, step, (face1, face2)
+                best = step
                 solution = True
     if solution:
         print(f'本地图至少需要两人才可安全搜索，最小步数为{final_step}，可以在两个守卫分别面向{best_faces[0] * 30}度和{best_faces[1] * 30}度时取得，与之对应的一个最优路径为{final_path}')
