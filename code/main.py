@@ -154,10 +154,13 @@ def visible_mask_at(position, face):
                 result |= 1 << idx(i, j)
     visible_mask_at_cache[position, face] = result
     return result
+#因为每次check都要遍历所有格子，虽然check依托的函数都已经记忆化
+#这里还是给check做一个记忆化
+check_cache = {}
 def check(position1, face1, position2 = (-1, -1), face2 = 0, cleared_mask = 0):
     #这里角度取值用整数标记，face可以取0 - 11，对应关系是实际角度 = face * math.pi / 6
-    #虽然这样可能有点笨，但我没想到更好的办法，所以直接每个格子遍历一遍了
-    #这里只需要处理两种情况：一种是一个人一种是两个人，三个人直接输出退化解即可
+    if (position1, face1, position2, face2, cleared_mask) in check_cache:
+        return check_cache[(position1, face1, position2, face2, cleared_mask)]
     for i in range(width):
         for j in range(height):
             if (cleared_mask >> idx(i, j)) & 1:
@@ -177,7 +180,9 @@ def check(position1, face1, position2 = (-1, -1), face2 = 0, cleared_mask = 0):
             if position2 != (-1, -1):
                 if can_see((i, j), position2, face2):
                     continue
+            check_cache[(position1, face1, position2, face2, cleared_mask)] = False
             return False
+    check_cache[(position1, face1, position2, face2, cleared_mask)] = True
     return True
 #准备工作基本已经完成，接下来是主干部分
 #这里决定用广搜
@@ -194,7 +199,9 @@ def find_all_empty_mask():
             if map1[i][j] == 0:
                 all_empty_mask |= 1 << idx(i, j)
     return all_empty_mask
-def search1(initial):
+#为了优化这里做一个剪枝，搜索的时候传一个上界进去
+#如果步数超过上界就直接退出
+def search1(initial, upper):
     #search1需要传一个叫做initial的形参进去
     #initial应该是一个tuple，包含三样东西：
     #守卫位置（用tuple标记），面向（从0取到11的一个整数），已清除集合(这里用位掩码表示)
@@ -208,7 +215,8 @@ def search1(initial):
     action[initial] = None
     #这里单独加一个初始状态的检验
     if not check(initial[0], initial[1], cleared_mask = initial[2]):
-        return False, None
+        return False, None, -1
+    depth = {initial: 0}
     while queue:
         state = queue.popleft()
         #终止条件
@@ -219,7 +227,11 @@ def search1(initial):
                 path.append(action[current])
                 current = parent[current]
             path.reverse()
-            return True, path
+            return True, path, depth[state]
+        if depth[state] >= upper:
+            return False, None, -1
+        #这里要特别注意，虽然整体代码能跑起来，但是search1和search2不能单用了
+        #因为步数上界的存在，可能会返回假阴性
         #下面生成所有可能的后继情况
         #对于单人搜索，一共有6种后继：上、下、左、右、逆时针转delta、顺时针转delta
         all_possible_next = collections.deque()
@@ -252,7 +264,8 @@ def search1(initial):
                         queue.append(next_state_changed)
                         parent[next_state_changed] = state
                         action[next_state_changed] = act
-    return False, None
+                        depth[next_state_changed] = depth[state] + 1
+    return False, None, -1
 #test
 #先留着后面可能要用
 # input2()
@@ -315,7 +328,8 @@ def next_step_generator(state, action1, action2):
     new_state = (new_guard1, new_face1, new_guard2, new_face2, cleared_mask)
     #这里action1，action2一起还回去，方便后面记录path
     return new_state, action1, action2
-def search2(initial):
+#同理给search2加个上界
+def search2(initial, upper):
     #传进去的initial应该是一个包含五样东西的tuple，依次为：
     #守卫1位置，守卫1面向，守卫2位置，守卫2面向，已清除集合
     #这里每一次生成后续都有36种情况，手写太麻烦
@@ -330,7 +344,8 @@ def search2(initial):
     action[initial] = None
     #初始情况检验
     if not check(initial[0], initial[1], initial[2], initial[3], initial[4]):
-            return False, None
+            return False, None, -1
+    depth = {initial: 0}
     while queue:
         state = queue.popleft()
         #终止条件
@@ -341,7 +356,9 @@ def search2(initial):
                 path.append(action[current])
                 current = parent[current]
             path.reverse()
-            return True, path
+            return True, path, depth[state]
+        if depth[state] >= upper:
+            return False, None, -1
         #接下来生成所有可能的下一步
         all_possible_next = collections.deque()
         for action1 in ['up', 'down', 'left', 'right', 'anticlock', 'clock']:
@@ -361,7 +378,8 @@ def search2(initial):
                         queue.append(next_state_changed)
                         parent[next_state_changed] = state
                         action[next_state_changed] = (action1, action2)
-    return False, None
+                        depth[next_state_changed] = depth[state] + 1
+    return False, None, -1
 #前置部分全部完成，下面编写主函数
 #下面这个是初版，因为初始情况比较复杂所以是一旦搜到就立刻返回
 #但是紧接着就发现要求步数下界并不难，所以后面写了一个求步数下界的版本
@@ -403,16 +421,25 @@ input2()
 start = input_start()
 solution = False
 all_empty_mask = find_all_empty_mask()
-#这里用一个字典做记忆化，实际上这么做会有点粗糙
-#双人情况就要搜144次，不过性能够用就行
-memo1 = {}
+# memo1 = {}
 # 先进行单人搜索
+final_path = None
+final_step = -1
+best_face = -1
+best = 9999999
 for face in range(12):
     initial_mask = visible_mask_at(start, face)
     initial = (start, face, initial_mask)
-    result, path = search1(initial)
+    result, path, step = search1(initial, best)
     if result:
-        memo1[face] = (path, len(path) - 1)
+        final_path, final_step, best_face = path, step, face
+        solution = True
+if solution:
+    print(f'本地图可以单人完成搜索，最小步数为{final_step}，可以在初始面向取{best_face * 30}度时取得，一个最优路径为{final_path}。')
+#这段是老版本，弃用了
+    # if result:
+    #     memo1[face] = (path, len(path) - 1)
+    #     best = len(path - 1)
 # if memo1 != {}:
 #     solution = True
 #     steps_min = 10000
@@ -423,26 +450,37 @@ for face in range(12):
 #             best_initial_face = face
 #     print(f'本地图可以单人完成搜索，最小步数为{memo1[best_initial_face][1]}，可以在初始面向取{best_initial_face * 30}度时取得，一个最优路径为{memo1[best_initial_face][0]}。')
 # 如果单人没搜出来接下来进双人搜索
-#同理用一个字典做记忆化
-memo2 = {}
+# memo2 = {}
+best_faces = (-1, -1)
+final_path = None
+final_step = -1
+best = 9999999
+#理论上来说除了best之外其他几个变量都不用重置
+#但是为了保险起见还是重置一下，没啥影响
 if not solution:
     for face1 in range(12):
-        for face2 in range(12):
+        for face2 in range(face1, 12):
             cleared = visible_mask_at(start, face1) | visible_mask_at(start, face2)
             initial = (start, face1, start, face2, cleared)
-            result, path = search2(initial)
+            result, path, step = search2(initial, best)
             if result:
-                memo2[(face1, face2)] = (path, len(path) - 1)
-    if memo2 != {}:
-        solution = True
-        steps_min = 10000
-        best_initial_face1, best_initial_face2 = -1, -1
-        for faces in memo2:
-            if memo2[faces][1] < steps_min:
-                steps_min = memo2[faces][1]
-                best_initial_face1, best_initial_face2 = faces
-                best_path = memo2[faces][0]
-    print(f'本地图至少需要两人才可安全搜索，最小步数为{steps_min}，可以在两个守卫分别面向{best_initial_face1 * 30}度和{best_initial_face2 * 30}度时取得，与之对应的一个最优路径为{best_path}')
+                final_path , final_step, best_faces = path, step, (face1, face2)
+                solution = True
+    if solution:
+        print(f'本地图至少需要两人才可安全搜索，最小步数为{final_step}，可以在两个守卫分别面向{best_faces[0] * 30}度和{best_faces[1] * 30}度时取得，与之对应的一个最优路径为{final_path}')
+    #下面的弃用了
+    #         if result:
+    #             memo2[(face1, face2)] = (path, len(path) - 1)
+    # if memo2 != {}:
+    #     solution = True
+    #     steps_min = 10000
+    #     best_initial_face1, best_initial_face2 = -1, -1
+    #     for faces in memo2:
+    #         if memo2[faces][1] < steps_min:
+    #             steps_min = memo2[faces][1]
+    #             best_initial_face1, best_initial_face2 = faces
+    #             best_path = memo2[faces][0]
+    # print(f'本地图至少需要两人才可安全搜索，最小步数为{steps_min}，可以在两个守卫分别面向{best_initial_face1 * 30}度和{best_initial_face2 * 30}度时取得，与之对应的一个最优路径为{best_path}')
 if not solution:
     #如果双人也没搜出来就输出退化解
     print('本地图需要至少三人才可安全搜索。没有非平凡的安全路径。')
