@@ -1,5 +1,11 @@
 import math
 import collections
+import numpy as np
+import matplotlib
+matplotlib.use('TkAgg')          # 强制有界面后端；若报错改 'QtAgg'
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+import matplotlib.patches as mpatches
 #输入模块
 #这里用列表套列表来实现矩阵效果
 #先把行数和列数读进来
@@ -417,16 +423,225 @@ def search2(initial, upper):
 #     #如果双人也没搜出来就输出退化解
 #     print('本地图需要至少三人才可安全搜索。没有非平凡的安全路径。')
 #以下为输出最短路径的结果
+# input2()
+# start = input_start()
+# solution = False
+# all_empty_mask = find_all_empty_mask()
+# # memo1 = {}
+# # 先进行单人搜索
+# final_path = None
+# final_step = -1
+# best_face = -1
+# best = 9999999
+# for face in range(12):
+#     initial_mask = visible_mask_at(start, face)
+#     initial = (start, face, initial_mask)
+#     result, path, step = search1(initial, best)
+#     if result:
+#         final_path, final_step, best_face = path, step, face
+#         best = step
+#         solution = True
+# if solution:
+#     print(f'本地图可以单人完成搜索，最小步数为{final_step}，可以在初始面向取{best_face * 30}度时取得，一个最优路径为{final_path}。')
+# #这段是老版本，弃用了
+#     # if result:
+#     #     memo1[face] = (path, len(path) - 1)
+#     #     best = len(path - 1)
+# # if memo1 != {}:
+# #     solution = True
+# #     steps_min = 10000
+# #     best_initial_face = -1
+# #     for face in memo1:
+# #         if memo1[face][1] < steps_min:
+# #             steps_min = memo1[face][1]
+# #             best_initial_face = face
+# #     print(f'本地图可以单人完成搜索，最小步数为{memo1[best_initial_face][1]}，可以在初始面向取{best_initial_face * 30}度时取得，一个最优路径为{memo1[best_initial_face][0]}。')
+# # 如果单人没搜出来接下来进双人搜索
+# # memo2 = {}
+# best_faces = (-1, -1)
+# final_path = None
+# final_step = -1
+# best = 9999999
+# #理论上来说除了best之外其他几个变量都不用重置
+# #但是为了保险起见还是重置一下，没啥影响
+# if not solution:
+#     for face1 in range(12):
+#         for face2 in range(face1, 12):
+#             cleared = visible_mask_at(start, face1) | visible_mask_at(start, face2)
+#             initial = (start, face1, start, face2, cleared)
+#             result, path, step = search2(initial, best)
+#             if result:
+#                 final_path , final_step, best_faces = path, step, (face1, face2)
+#                 best = step
+#                 solution = True
+#     if solution:
+#         print(f'本地图至少需要两人才可安全搜索，最小步数为{final_step}，可以在两个守卫分别面向{best_faces[0] * 30}度和{best_faces[1] * 30}度时取得，与之对应的一个最优路径为{final_path}')
+#     #下面的弃用了
+#     #         if result:
+#     #             memo2[(face1, face2)] = (path, len(path) - 1)
+#     # if memo2 != {}:
+#     #     solution = True
+#     #     steps_min = 10000
+#     #     best_initial_face1, best_initial_face2 = -1, -1
+#     #     for faces in memo2:
+#     #         if memo2[faces][1] < steps_min:
+#     #             steps_min = memo2[faces][1]
+#     #             best_initial_face1, best_initial_face2 = faces
+#     #             best_path = memo2[faces][0]
+#     # print(f'本地图至少需要两人才可安全搜索，最小步数为{steps_min}，可以在两个守卫分别面向{best_initial_face1 * 30}度和{best_initial_face2 * 30}度时取得，与之对应的一个最优路径为{best_path}')
+# if not solution:
+#     #如果双人也没搜出来就输出退化解
+#     print('本地图需要至少三人才可安全搜索。没有非平凡的安全路径。')
+#不知道为什么双人搜的很慢，耐心等待即可，主要是我懒得优化了
+# ==================== 重放 path 重建状态序列 ====================
+def _apply_one(pos, face, act):
+    if act is None:                            
+        return pos, face
+    if act == 'up':    return (pos[0], pos[1] + 1), face
+    elif act == 'down':  return (pos[0], pos[1] - 1), face
+    elif act == 'left':  return (pos[0] - 1, pos[1]), face
+    elif act == 'right': return (pos[0] + 1, pos[1]), face
+    elif act == 'anticlock': return pos, (face + delta) % 12
+    elif act == 'clock':     return pos, (face - delta) % 12
+    else:
+        raise ValueError(f"_apply_one 收到未知动作: {act!r}")  
+def replay_single(start, face0, path):
+    states = []
+    pos, face = start, face0
+    cleared = visible_mask_at(pos, face)
+    states.append((pos, face, cleared))
+    for act in path:
+        if act is None:                        
+            continue
+        pos, face = _apply_one(pos, face, act)
+        cleared |= visible_mask_at(pos, face)
+        states.append((pos, face, cleared))
+    return states
+
+def replay_double(start, face1_0, face2_0, path):
+    states = []
+    g1, f1, g2, f2 = start, face1_0, start, face2_0
+    cleared = visible_mask_at(g1, f1) | visible_mask_at(g2, f2)
+    states.append((g1, f1, g2, f2, cleared))
+    for item in path:
+        if item is None:                       
+            continue
+        a1, a2 = item
+        g1, f1 = _apply_one(g1, f1, a1)
+        g2, f2 = _apply_one(g2, f2, a2)
+        cleared |= visible_mask_at(g1, f1) | visible_mask_at(g2, f2)
+        states.append((g1, f1, g2, f2, cleared))
+    return states
+
+# ==================== 可视化 ====================
+_ani_keepalive = None
+
+def quick_anim(states, mode='single', interval=400, save=None):
+    global _ani_keepalive
+    assert states, "states 为空，检查 replay_* 的输入"
+    print(f"开始动画，共 {len(states)} 帧，后端 = {matplotlib.get_backend()}")
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    base = np.array(map1).T  # [y][x]
+
+    def update(i):
+        ax.clear()
+        ax.imshow(base, cmap='gray_r', origin='upper',
+                  extent=(-0.5, width - 0.5, height - 0.5, -0.5))
+        ax.set_xticks(range(width)); ax.set_yticks(range(height))
+        ax.grid(color='lightgray', lw=0.4)
+        ax.set_aspect('equal')
+
+        st = states[i]
+        if mode == 'single':
+            g1, f1, cleared = st
+            guards = [(g1, f1, 'red')]
+        else:
+            g1, f1, g2, f2, cleared = st
+            guards = [(g1, f1, 'red'), (g2, f2, 'blue')]
+
+        # 已清除格子
+        for x in range(width):
+            for y in range(height):
+                if (cleared >> idx(x, y)) & 1 and map1[x][y] == 0:
+                    ax.add_patch(mpatches.Rectangle((x - 0.5, y - 0.5), 1, 1,
+                                                    facecolor='lime', alpha=0.3))
+        # 守卫 + 当前视野格子
+        for gpos, gface, c in guards:
+            for x in range(width):
+                for y in range(height):
+                    if map1[x][y] == 0 and can_see((x, y), gpos, gface):
+                        ax.add_patch(mpatches.Rectangle((x - 0.5, y - 0.5), 1, 1,
+                                                        facecolor=c, alpha=0.12))
+            ax.add_patch(mpatches.Circle(gpos, 0.3, color=c, zorder=5))
+            th = gface * np.pi / 6
+            ax.annotate('', xy=(gpos[0] + 0.45 * np.cos(th), gpos[1] + 0.45 * np.sin(th)),
+                        xytext=gpos, arrowprops=dict(arrowstyle='-|>', color=c, lw=2))
+        ax.set_title(f'step {i}/{len(states) - 1}')
+
+    ani = FuncAnimation(fig, update, frames=len(states),
+                        interval=interval, repeat=False)
+    _ani_keepalive = ani
+    if save:
+        ani.save(save, writer='pillow', fps=max(1, 1000 // interval))
+        print(f"动画已保存到 {save}")
+    plt.show(block=True)
+    return ani
+
+# ==================== 主流程 ====================
+#这个是优化之前的主流程，弃用
+# input2()
+# start = input_start()
+# all_empty_mask = find_all_empty_mask()
+
+# memo1 = {}
+# for face in range(12):
+#     initial_mask = visible_mask_at(start, face)
+#     initial = (start, face, initial_mask)
+#     ok, path = search1(initial)
+#     if ok:
+#         memo1[face] = (path, len(path))         
+#         print(f"单人解：初始面向 {face*30}°，{len(path)} 步")
+
+# memo2 = {}
+# if not memo1:
+#     for face1 in range(12):
+#         for face2 in range(12):
+#             cleared = visible_mask_at(start, face1) | visible_mask_at(start, face2)
+#             initial = (start, face1, start, face2, cleared)
+#             ok, path = search2(initial)
+#             if ok:
+#                 memo2[(face1, face2)] = (path, len(path))   
+#                 print(f"双人解：初始面向 {face1*30}° / {face2*30}°，{len(path)} 步")
+
+# if memo1:
+#     best_face = min(memo1, key=lambda f: memo1[f][1])
+#     path, steps = memo1[best_face]
+#     print(f"\n=== 最优单人解：{steps} 步，初始面向 {best_face*30}° ===")
+#     print("路径：", path)
+#     states = replay_single(start, best_face, path)
+#     quick_anim(states, mode='single', interval=400, save='single.gif')
+# elif memo2:
+#     best = min(memo2, key=lambda k: memo2[k][1])
+#     path, steps = memo2[best]
+#     f1, f2 = best
+#     print(f"\n=== 最优双人解：{steps} 步，初始面向 {f1*30}° / {f2*30}° ===")
+#     print("路径：", path)
+#     states = replay_double(start, f1, f2, path)
+#     quick_anim(states, mode='double', interval=500, save='double.gif')
+# else:
+#     print("本地图需要至少三人才可安全搜索。没有非平凡的安全路径。")
 input2()
 start = input_start()
 solution = False
 all_empty_mask = find_all_empty_mask()
-# memo1 = {}
 # 先进行单人搜索
 final_path = None
 final_step = -1
 best_face = -1
 best = 9999999
+found1 = False
+found2 = False
 for face in range(12):
     initial_mask = visible_mask_at(start, face)
     initial = (start, face, initial_mask)
@@ -437,21 +652,8 @@ for face in range(12):
         solution = True
 if solution:
     print(f'本地图可以单人完成搜索，最小步数为{final_step}，可以在初始面向取{best_face * 30}度时取得，一个最优路径为{final_path}。')
-#这段是老版本，弃用了
-    # if result:
-    #     memo1[face] = (path, len(path) - 1)
-    #     best = len(path - 1)
-# if memo1 != {}:
-#     solution = True
-#     steps_min = 10000
-#     best_initial_face = -1
-#     for face in memo1:
-#         if memo1[face][1] < steps_min:
-#             steps_min = memo1[face][1]
-#             best_initial_face = face
-#     print(f'本地图可以单人完成搜索，最小步数为{memo1[best_initial_face][1]}，可以在初始面向取{best_initial_face * 30}度时取得，一个最优路径为{memo1[best_initial_face][0]}。')
-# 如果单人没搜出来接下来进双人搜索
-# memo2 = {}
+    found1 = True
+    path, steps = final_path, final_step
 best_faces = (-1, -1)
 final_path = None
 final_step = -1
@@ -470,25 +672,25 @@ if not solution:
                 solution = True
     if solution:
         print(f'本地图至少需要两人才可安全搜索，最小步数为{final_step}，可以在两个守卫分别面向{best_faces[0] * 30}度和{best_faces[1] * 30}度时取得，与之对应的一个最优路径为{final_path}')
-    #下面的弃用了
-    #         if result:
-    #             memo2[(face1, face2)] = (path, len(path) - 1)
-    # if memo2 != {}:
-    #     solution = True
-    #     steps_min = 10000
-    #     best_initial_face1, best_initial_face2 = -1, -1
-    #     for faces in memo2:
-    #         if memo2[faces][1] < steps_min:
-    #             steps_min = memo2[faces][1]
-    #             best_initial_face1, best_initial_face2 = faces
-    #             best_path = memo2[faces][0]
-    # print(f'本地图至少需要两人才可安全搜索，最小步数为{steps_min}，可以在两个守卫分别面向{best_initial_face1 * 30}度和{best_initial_face2 * 30}度时取得，与之对应的一个最优路径为{best_path}')
+        found2 = True
+        best, path, steps = best_faces, final_path, final_step
 if not solution:
     #如果双人也没搜出来就输出退化解
     print('本地图需要至少三人才可安全搜索。没有非平凡的安全路径。')
-#不知道为什么双人搜的很慢，耐心等待即可，主要是我懒得优化了
-    
 
+if found1:
+    print(f"\n=== 最优单人解：{steps} 步，初始面向 {best_face*30}° ===")
+    print("路径：", path)
+    states = replay_single(start, best_face, path)
+    quick_anim(states, mode='single', interval=400, save='single.gif')
+elif found2:
+    f1, f2 = best
+    print(f"\n=== 最优双人解：{steps} 步，初始面向 {f1*30}° / {f2*30}° ===")
+    print("路径：", path)
+    states = replay_double(start, f1, f2, path)
+    quick_anim(states, mode='double', interval=500, save='double.gif')
+else:
+    print("本地图需要至少三人才可安全搜索。没有非平凡的安全路径。")
         
     
 
