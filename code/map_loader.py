@@ -55,6 +55,12 @@ def apply_map(map1, start=None):
     constants.height = len(map1[0]) if map1 else 0
     constants.map1 = map1
     simulation.clear_caches()
+    # 起点已知时顺手检查连通性：有走不到的空地时，搜索一定无解，
+    # 提前提示比让用户等着漫长搜索更友好（随机地图生成时已保证连通）
+    if start is not None and not _connected(map1, constants.width,
+                                           constants.height, start):
+        print('警告：地图中存在从起点走不到的空地，这些格子无法被清除，'
+              '搜索很可能直接判定为无解。')
     return start
 
 

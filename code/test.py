@@ -58,13 +58,23 @@ def print_table(rows):
     print(f'{"算法":<8}{"最少人数":<8}{"步数":<6}{"面向":<16}'
           f'{"单人耗时(ms)":<12}{"双人耗时(ms)":<12}')
     for r in rows:
+        algo = r['algo']
+        algo_str = algo if len(algo) <= 8 else algo[:7] + '…'
         guards = r.get('guards', '-')
         facing = r.get('facing', '-')
         facing_str = facing if len(facing) <= 14 else facing[:13] + '…'
-        print(f"{r['algo']:<8}{guards:<8}{fmt(r.get('steps')):<6}{facing_str:<16}"
-              f"{r['single_ms']:<12.1f}{fmt(r.get('double_ms'), ''):<12}")
+        double_ms = r.get('double_ms')
+        double_str = '-' if double_ms is None else f'{double_ms:.1f}'
+        print(f"{algo_str:<8}{guards:<8}{fmt(r.get('steps')):<6}{facing_str:<16}"
+              f"{r['single_ms']:<12.1f}{double_str:<12}")
         if len(facing) > 14:
             print(f'{"":<22}{facing}')
+    # 合计一行：方便一眼看出各算法在本轮测试里的总开销
+    total_single = sum(r['single_ms'] for r in rows)
+    total_double = sum(r.get('double_ms') or 0.0 for r in rows)
+    print('-' * 62)
+    print(f'{"总计":<8}{"":<8}{"":<6}{"":<16}'
+          f'{total_single:<12.1f}{total_double:<12.1f}')
 
 
 def plot_comparison(rows, has_double):

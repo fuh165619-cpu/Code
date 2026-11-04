@@ -4,6 +4,13 @@
 # 规则部分：
 #   check：检查当前状态是否安全（每个空地要么已被清除，要么正被某个守卫看到）
 #   动作系统：只有六种动作——上、下、左、右、逆时针转、顺时针转
+#
+# 性能说明：
+#   搜索每展开一个后继都要做一次安全性检查，原来的 check 每次都要遍历全图、
+#   逐格调用 block / can_see。这里把"某个 (位置, 面向) 在格子未清除时会判定为
+#   不安全的格子集合"预先压成位掩码（exposed_mask），check 退化成几次位运算；
+#   可见性也改成按 (格子, 守卫位置) 缓存 12 个面向的可见位（角度只算一次）。
+#   判定结果与原逐格实现完全一致（单人和双人的语义都保持不变）。
 import math
 import constants
 
@@ -13,47 +20,61 @@ block_cache = {}
 def block(position1, position2):
     # 判断两格连线之间是否被墙挡住：沿连线密集采样，踩到墙格即算挡住
     # 两个点重合视为没被挡住（调用时会避免这种情况），端点格子本身不算遮挡
-    if (position1, position2) in block_cache:
-        return block_cache[(position1, position2)]
+    key = (position1, position2)
+    cached = block_cache.get(key)
+    if cached is not None:
+        return cached
     x1, y1 = position1
     x2, y2 = position2
     step = max(abs(x1 - x2), abs(y1 - y2)) * 20
-    for i in range(1, step):
-        t = i / step
-        x = (1 - t) * x1 + t * x2
-        y = (1 - t) * y1 + t * y2
-        ix = int(round(x))
-        iy = int(round(y))
-        if not constants.is_open(ix, iy) and not (ix, iy) in [position1, position2]:
-            block_cache[(position1, position2)] = True
-            return True
-    block_cache[(position1, position2)] = False
-    return False
+    blocked = False
+    if step > 1:
+        map1 = constants.map1
+        width, height = constants.width, constants.height
+        for i in range(1, step):
+            t = i / step
+            ix = int(round((1 - t) * x1 + t * x2))
+            iy = int(round((1 - t) * y1 + t * y2))
+            if (0 <= ix < width and 0 <= iy < height and map1[ix][iy] != 0
+                    and (ix, iy) != position1 and (ix, iy) != position2):
+                blocked = True
+                break
+    block_cache[key] = blocked
+    return blocked
 
 
-can_see_cache = {}
+# 每个 (格子, 守卫位置) 能看到它的面向集合（12 位掩码），角度只算一次
+_ALL_FACES = (1 << 12) - 1
+_see_faces_cache = {}
+
+
+def _see_faces(position, guard):
+    key = (position, guard)
+    faces = _see_faces_cache.get(key)
+    if faces is not None:
+        return faces
+    if not constants.is_open(*position):
+        faces = 0
+    elif position == guard:
+        faces = _ALL_FACES
+    elif block(position, guard):
+        faces = 0
+    else:
+        # 视野锥为面朝方向左右各60度，共120度
+        theta = math.atan2(position[1] - guard[1], position[0] - guard[0])
+        limit = 2 * math.pi / 3 + constants.eps
+        faces = 0
+        for face in range(12):
+            if (theta - face * math.pi / 6) % (2 * math.pi) <= limit:
+                faces |= 1 << face
+    _see_faces_cache[key] = faces
+    return faces
 
 
 def can_see(position, guard, face):
     # position 能否被守卫看到
     # face 用整数标记，取值 0-11，实际角度 = face * 30 度
-    if (position, guard, face) in can_see_cache:
-        return can_see_cache[(position, guard, face)]
-    if not constants.is_open(*position):
-        can_see_cache[position, guard, face] = False
-        return False
-    if position == guard:
-        can_see_cache[position, guard, face] = True
-        return True
-    if block(position, guard):
-        can_see_cache[position, guard, face] = False
-        return False
-    # 视野锥为面朝方向左右各60度，共120度
-    if (math.atan2(position[1] - guard[1], position[0] - guard[0]) - face * math.pi / 6) % (2 * math.pi) <= 2 * math.pi / 3 + constants.eps:
-        can_see_cache[position, guard, face] = True
-        return True
-    can_see_cache[position, guard, face] = False
-    return False
+    return bool(_see_faces(position, guard) >> int(face) & 1)
 
 
 visible_mask_at_cache = {}
@@ -61,14 +82,17 @@ visible_mask_at_cache = {}
 
 def visible_mask_at(position, face):
     # 该状态下守卫能看到的全部格子，压成一个位掩码
-    if (position, face) in visible_mask_at_cache:
-        return visible_mask_at_cache[(position, face)]
+    face = int(face)
+    key = (position, face)
+    result = visible_mask_at_cache.get(key)
+    if result is not None:
+        return result
     result = 0
     for i in range(constants.width):
         for j in range(constants.height):
-            if can_see((i, j), position, face):
+            if _see_faces((i, j), position) >> face & 1:
                 result |= 1 << constants.idx(i, j)
-    visible_mask_at_cache[(position, face)] = result
+    visible_mask_at_cache[key] = result
     return result
 
 
@@ -79,42 +103,55 @@ def clear_caches():
     # 清空本模块的全部记忆化缓存。
     # 缓存的 key 不含地图信息，所以每次更换地图后必须清空，否则会读到旧地图的结果
     block_cache.clear()
-    can_see_cache.clear()
+    _see_faces_cache.clear()
     visible_mask_at_cache.clear()
-    check_cache.clear()
+    los_mask_cache.clear()
+    exposed_mask_cache.clear()
 
 
 # ---------- 安全性检查 ----------
 
-check_cache = {}
+los_mask_cache = {}
+
+
+def los_mask(position):
+    # 与 position 之间"没有墙挡住视线"的所有空地，压成位掩码
+    mask = los_mask_cache.get(position)
+    if mask is None:
+        mask = 0
+        for i in range(constants.width):
+            for j in range(constants.height):
+                if constants.is_open(i, j) and not block((i, j), position):
+                    mask |= 1 << constants.idx(i, j)
+        los_mask_cache[position] = mask
+    return mask
+
+
+exposed_mask_cache = {}
+
+
+def exposed_mask(position, face):
+    # 该 (位置, 面向) 下"没有被看到、但又能看到守卫"的格子：
+    # 这些格子只要还没被清除，就说明守卫会先被对方发现，状态不安全。
+    face = int(face)
+    key = (position, face)
+    mask = exposed_mask_cache.get(key)
+    if mask is None:
+        mask = los_mask(position) & ~visible_mask_at(position, face)
+        exposed_mask_cache[key] = mask
+    return mask
 
 
 def check(position1, face1, position2=(-1, -1), face2=0, cleared_mask=0):
     # face 用整数标记，取值 0-11，实际角度 = face * math.pi / 6
     # position2 = (-1, -1) 表示单人模式
-    key = (position1, face1, position2, face2, cleared_mask)
-    if key in check_cache:
-        return check_cache[key]
-    for i in range(constants.width):
-        for j in range(constants.height):
-            if (cleared_mask >> constants.idx(i, j)) & 1:
-                continue
-            if not constants.is_open(i, j):
-                continue
-            if (i, j) == position1 or (i, j) == position2:
-                continue
-            if block((i, j), position1):
-                continue
-            if position2 != (-1, -1) and block((i, j), position2):
-                continue
-            if can_see((i, j), position1, face1):
-                continue
-            if position2 != (-1, -1) and can_see((i, j), position2, face2):
-                continue
-            check_cache[key] = False
-            return False
-    check_cache[key] = True
-    return True
+    # 逐格判定的等价写法：
+    #   单人：存在"有视线但没被看到且未清除"的格子 -> 不安全
+    #   双人：存在"对两个守卫都有视线、都没被看到且未清除"的格子 -> 不安全
+    if position2 == (-1, -1):
+        return not (exposed_mask(position1, face1) & ~cleared_mask)
+    return not (exposed_mask(position1, face1) & exposed_mask(position2, face2)
+                & ~cleared_mask)
 
 
 # 移动动作对应的位移量

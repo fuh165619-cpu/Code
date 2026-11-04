@@ -34,6 +34,8 @@ def solve_single(algo, start):
             final_path, final_step, best_face = path, step, face
             best = step
             solution = True
+            if best == 0:          # 已经是理论最优（0 步），不用再试其它初始面向
+                break
     ms = (time.perf_counter() - t0) * 1000
     return {'ok': solution, 'path': final_path, 'steps': final_step,
             'face': best_face, 'ms': ms}
@@ -50,14 +52,19 @@ def solve_double(algo, start):
     best = UPPER_INIT
     for face1 in range(12):
         # face2 从 face1 开始：两个初始面向对称，省一半
+        face1_mask = visible_mask_at(start, face1)
         for face2 in range(face1, 12):
-            cleared = visible_mask_at(start, face1) | visible_mask_at(start, face2)
+            cleared = face1_mask | visible_mask_at(start, face2)
             initial = (start, face1, start, face2, cleared)
             result, path, step = algo.search_double(initial, best)
             if result:
                 final_path, final_step, best_faces = path, step, (face1, face2)
                 best = step
                 solution = True
+                if best == 0:
+                    break
+        if best == 0:
+            break
     ms = (time.perf_counter() - t0) * 1000
     return {'ok': solution, 'path': final_path, 'steps': final_step,
             'faces': best_faces, 'ms': ms}
@@ -139,6 +146,7 @@ def main():
         return
 
     # ---------- 双人搜索 ----------
+    print('\n单人无解，开始双人搜索（会枚举 78 组初始面向，可能较慢）...')
     res2 = solve_double(algo, start)
     time_rows.append(('双人搜索', res2['ms'], res2['steps'] if res2['ok'] else '无解'))
     if res2['ok']:

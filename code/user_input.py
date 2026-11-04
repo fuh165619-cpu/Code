@@ -1,17 +1,52 @@
 # ==================== 用户输入模块 ====================
 # 地图来源统一从 choose_map() 进入（预设 / 文件 / 随机 / 手动）
 # 地图大小一律自动从内容读取，不需要手动输入长宽
+# 所有数字输入都做了容错：输错只会提示重输，不会让程序崩掉
 import constants
 import map_loader
 
 
+def _ask_positive_int(prompt):
+    # 读一个正整数，非数字或非正数都提示重输
+    while True:
+        try:
+            value = int(input(prompt).strip())
+        except ValueError:
+            print('请输入一个整数！')
+            continue
+        if value > 0:
+            return value
+        print('必须输入大于 0 的整数！')
+
+
+def _ask_density():
+    # 读墙密度，直接回车用默认值 0.2
+    while True:
+        raw = input('请输入墙密度（0 到 1 之间的小数，直接回车默认 0.2）：').strip()
+        if not raw:
+            return 0.2
+        try:
+            value = float(raw)
+        except ValueError:
+            print('请输入 0 到 1 之间的小数！')
+            continue
+        if 0 <= value < 1:
+            return value
+        print('墙密度必须是 0 到 1 之间的小数！')
+
+
 def read_delta():
     # 角度用整数标记，delta 只取 1 和 2，分别对应 30 度和 60 度
-    temp = int(input('请输入每次转头的角度delta，只能是30或60：'))
-    while temp not in [30, 60]:
+    while True:
+        try:
+            temp = int(input('请输入每次转头的角度delta，只能是30或60：').strip())
+        except ValueError:
+            print('错误！请输入数字 30 或 60！')
+            continue
+        if temp in (30, 60):
+            constants.delta = temp / 30
+            return
         print('错误！当前版本只支持取delta为30或60！')
-        temp = int(input('请输入每次转头的角度delta，只能是30或60：'))
-    constants.delta = temp / 30
 
 
 def manual_map():
@@ -36,11 +71,16 @@ def manual_map():
 
 def input_start():
     # 输入起始格子坐标，必须在地图内且不为墙格
-    start_x, start_y = (int(i.strip()) for i in input("请输入起始格子的坐标（x, y）: ").split(","))
-    while not (constants.in_bounds(start_x, start_y) and constants.is_open(start_x, start_y)):
+    while True:
+        try:
+            x_text, y_text = input("请输入起始格子的坐标（x, y）: ").split(',')
+            x, y = int(x_text.strip()), int(y_text.strip())
+        except ValueError:
+            print('错误！请按 “x, y” 的格式输入两个整数！')
+            continue
+        if constants.in_bounds(x, y) and constants.is_open(x, y):
+            return x, y
         print('错误！起始格子必须在地图内且不为墙格！')
-        start_x, start_y = (int(i.strip()) for i in input("请输入起始格子的坐标（x, y）: ").split(","))
-    return start_x, start_y
 
 
 def choose_map():
@@ -80,15 +120,9 @@ def choose_map():
                 path = input('请输入地图文件路径：').strip()
 
     elif choice == '3':
-        width = int(input('width: '))
-        height = int(input('height: '))
-        if width <= 0 or height <= 0:
-            print("地图大小必须大于0")
-            exit(1)
-        density = float(input('请输入墙密度（0 到 1 之间的小数，直接回车默认 0.2）：').strip() or '0.2')
-        while not 0 <= density < 1:
-            print('墙密度必须是 0 到 1 之间的小数')
-            density = float(input('请输入墙密度（直接回车默认 0.2）：').strip() or '0.2')
+        width = _ask_positive_int('width: ')
+        height = _ask_positive_int('height: ')
+        density = _ask_density()
         start = map_loader.generate_random(width, height, density)
 
     else:

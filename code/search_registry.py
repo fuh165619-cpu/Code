@@ -4,9 +4,12 @@
 #   2. 模块里提供 search_single(initial, upper) 和 search_double(initial, upper)
 #      返回值统一为 (是否有解, 路径, 步数)
 #   3. 在下面 import 并加进 ALGORITHMS，main / test 就会自动看到它
+import A_search
 import BFS_search
 
 ALGORITHMS = {
+    # Fast：位掩码安全性判定 + 支配剪枝的最优搜索（interface 与 BFS 相同，结果同样最短）
+    'Fast': A_search,
     'BFS': BFS_search,
 }
 
